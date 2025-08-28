@@ -1,0 +1,32 @@
+[0m14:17:43.395429 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000001FA929F12B0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000001FA90615D10>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000001FA934F0050>]}
+
+
+============================== 14:17:43.422035 | ab164835-016a-49cb-b572-32cf14e8b952 ==============================
+[0m14:17:43.422035 [info ] [MainThread]: Running with dbt=1.10.9
+[0m14:17:43.424279 [debug] [MainThread]: running dbt with arguments {'printer_width': '80', 'use_experimental_parser': 'False', 'cache_selected_only': 'False', 'warn_error': 'None', 'profiles_dir': 'C:\\Users\\UTKAMTAM\\.dbt', 'debug': 'False', 'static_parser': 'True', 'log_cache_events': 'False', 'empty': 'None', 'quiet': 'False', 'log_format': 'default', 'use_colors': 'True', 'partial_parse': 'True', 'version_check': 'True', 'log_path': 'logs', 'introspect': 'True', 'no_print': 'None', 'fail_fast': 'False', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'invocation_command': 'dbt init my_dbt_project', 'send_anonymous_usage_stats': 'True', 'indirect_selection': 'eager', 'write_json': 'True', 'target_path': 'None'}
+[0m14:17:43.485553 [info ] [MainThread]: Creating dbt configuration folder at C:\Users\UTKAMTAM\.dbt
+[0m14:17:43.491555 [debug] [MainThread]: Starter project path: C:\Users\UTKAMTAM\OneDrive - Capgemini\Documents\streamlit\streamlist-for-snowflake\venv\Lib\site-packages\dbt\include\starter_project
+[0m14:17:43.559900 [info ] [MainThread]: 
+Your new dbt project "my_dbt_project" was created!
+
+For more information on how to configure the profiles.yml file,
+please consult the dbt documentation here:
+
+  https://docs.getdbt.com/docs/configure-your-profile
+
+One more thing:
+
+Need help? Don't hesitate to reach out to us via GitHub issues or on Slack:
+
+  https://community.getdbt.com/
+
+Happy modeling!
+
+[0m14:17:43.561179 [info ] [MainThread]: Setting up your profile.
+[0m14:17:43.565068 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No adapters available. Learn how to install an adapter by going to https://docs.getdbt.com/docs/connect-adapters#install-using-the-cli
+[0m14:17:43.567837 [debug] [MainThread]: Command `dbt init` failed at 14:17:43.567558 after 0.52 seconds
+[0m14:17:43.568509 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000001FA94BE9CD0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000001FA94BA20F0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000001FA93A92AD0>]}
+[0m14:17:43.569143 [debug] [MainThread]: Flushing usage events
+[0m14:17:44.960070 [debug] [MainThread]: An error was encountered while trying to flush usage events
