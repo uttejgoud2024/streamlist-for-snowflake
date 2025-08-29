@@ -6,6 +6,7 @@ import json
 import os
 
 # --- Profile Persistence Helpers ---
+
 PROFILES_FILE = "profiles.json"
 
 def load_profiles():
@@ -31,6 +32,7 @@ def delete_profile(profile_name):
         json.dump(profiles, f, indent=2)
 
 # --- SQL Validation ---
+
 def validate_sql(sql_text):
     try:
         parsed = sqlparse.parse(sql_text)
@@ -41,6 +43,7 @@ def validate_sql(sql_text):
         return False, str(e)
 
 # --- Snowflake Connection Test ---
+
 def test_snowflake_connection(user, password, account, warehouse, database, schema):
     try:
         conn = snowflake.connector.connect(
@@ -57,6 +60,7 @@ def test_snowflake_connection(user, password, account, warehouse, database, sche
         return False, str(e)
 
 # --- Run DBT Command ---
+
 def run_dbt_command(command):
     try:
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -65,6 +69,7 @@ def run_dbt_command(command):
         return "", str(e)
 
 # --- Page Navigation Setup ---
+
 pages = ["Home", "Environment Setup", "Migration Settings", "SQL Validation"]
 
 if "page_index" not in st.session_state:
@@ -75,6 +80,7 @@ st.sidebar.title("Oracle ➜ Snowflake DBT Migration")
 selected_page = st.sidebar.radio(
     "", pages, index=st.session_state.page_index, key="sidebar_radio"
 )
+
 if pages.index(selected_page) != st.session_state.page_index:
     st.session_state.page_index = pages.index(selected_page)
     st.rerun()
@@ -87,17 +93,17 @@ current_page = pages[st.session_state.page_index]
 if current_page == "Home":
     st.markdown("### 🏗️ Introduction")
     st.markdown("""
-A Python-powered Streamlit app that helps migrate Oracle SQL queries to Snowflake DBT models—complete with validation, conversion, and documentation.
-""")
+    A Python-powered Streamlit app that helps migrate Oracle SQL queries to Snowflake DBT models—complete with validation, conversion, and documentation.
+    """)
     st.markdown("### ✨ Features")
     st.markdown("""
-- ✅ SQL Validation
-- 🔄 Auto-conversion
-- 📦 Bulk Migration
-- 📘 Documentation Generator
-- 🧪 Snowflake Connection Test
-- 🚀 Run DBT Commands (in Environment Setup)
-""")
+    - ✅ SQL Validation
+    - 🔄 Auto-conversion (placeholder)
+    - 📦 Bulk Migration Support
+    - 📘 Documentation Generator
+    - 🧪 Snowflake Connection Test
+    - 🚀 Run DBT Commands (in Environment Setup)
+    """)
 
 elif current_page == "Environment Setup":
     st.subheader("Snowflake Credentials")
@@ -107,6 +113,7 @@ elif current_page == "Environment Setup":
     profile_names = list(SNOWFLAKE_PROFILES.keys())
     if "selected_profile" not in st.session_state:
         st.session_state.selected_profile = profile_names[0]
+
     selected_profile = st.selectbox(
         "Select Snowflake Profile",
         profile_names,
@@ -115,7 +122,7 @@ elif current_page == "Environment Setup":
     )
     st.session_state.selected_profile = selected_profile
     creds = SNOWFLAKE_PROFILES[selected_profile]
-
+    
     user = st.text_input("User", value=creds.get("user", st.session_state.get("user", "")))
     password = st.text_input("Password", type="password", value=creds.get("password", st.session_state.get("password", "")))
     account = st.text_input("Account", value=creds.get("account", st.session_state.get("account", "")))
@@ -166,20 +173,20 @@ elif current_page == "Environment Setup":
 
     st.subheader("DBT Project")
     dbt_path = st.text_input("DBT Project Path", value=st.session_state.get("dbt_path", ""))
-
     dbt_command = st.selectbox(
         "Select DBT Command",
         ["run", "build", "test", "seed", "snapshot", "docs generate"]
     )
+
     if st.button("Execute DBT"):
         st.session_state["dbt_path"] = dbt_path
         if dbt_path:
-                cmd = f"dbt {dbt_command} --project-dir {dbt_path}"
-                st.markdown(f"### Running: `{cmd}`")
-                stdout, stderr = run_dbt_command(cmd)
-                st.text_area("DBT Output", stdout, height=200)
-                if stderr:
-                    st.text_area("DBT Errors", stderr, height=200)
+            cmd = f"dbt {dbt_command} --project-dir {dbt_path}"
+            st.markdown(f"### Running: `{cmd}`")
+            stdout, stderr = run_dbt_command(cmd)
+            st.text_area("DBT Output", stdout, height=200)
+            if stderr:
+                st.text_area("DBT Errors", stderr, height=200)
         else:
             st.warning("Please provide DBT project path.")
 
@@ -192,6 +199,7 @@ elif current_page == "Migration Settings":
             for file in uploaded_files:
                 sql_content = file.read().decode("utf-8")
                 st.markdown(f"### Converted SQL for `{file.name}`")
+                # Placeholder: real Oracle to Snowflake conversion logic goes here
                 st.code(f"-- Converted to {model_type}\n{sql_content}", language="sql")
             st.success("Conversion completed!")
         else:
@@ -207,13 +215,4 @@ elif current_page == "SQL Validation":
             st.error(f"Validation failed: {message}")
 
 # --- Navigation Buttons ---
-st.markdown("<br><hr>", unsafe_allow_html=True)
-col1, col2 = st.columns([6, 1])
-with col1:
-    if st.button("⬅️ Previous") and st.session_state.page_index > 0:
-        st.session_state.page_index -= 1
-        st.rerun()
-with col2:
-    if st.button("Next ➡️") and st.session_state.page_index < len(pages) - 1:
-        st.session_state.page_index += 1
-        st.rerun()
+st.markdown("")
