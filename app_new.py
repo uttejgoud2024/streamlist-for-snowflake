@@ -1,6 +1,9 @@
 import streamlit as st
 import sqlparse
 import subprocess
+import os
+import yaml
+import glob
 
 # --- SQL Validation ---
 def validate_sql(sql_text):
@@ -11,6 +14,19 @@ def validate_sql(sql_text):
         return True, "SQL syntax looks valid."
     except Exception as e:
         return False, str(e)
+    
+# --- Function to parse dbt model YAML files ---
+def parse_dbt_yml(file_path):
+    with open(file_path, 'r') as f:
+        data = yaml.safe_load(f)
+    docs = []
+    for model in data.get('models', []):
+        model_name = model.get('name', 'Unnamed Model')
+        description = model.get('description', '')
+        columns = model.get('columns', [])
+        column_docs = "\n".join([f"- **{col['name']}**: {col.get('description', '')}" for col in columns])
+        docs.append(f"### {model_name}\n\n**Description**: {description}\n\n**Columns**:\n{column_docs}\n")
+    return docs
 
 # --- Run DBT Command ---
 def run_dbt_command(command):
@@ -101,6 +117,44 @@ elif current_page == "Migration Settings":
                 st.text_area("DBT Errors", stderr, height=200)
         else:
             st.warning("Please provide DBT project path.")
+    
+    st.markdown("### SQL Validation")
+    sql_input = st.text_area("Paste your Oracle SQL query here")
+    if st.button("Validate SQL"):
+        is_valid, message = validate_sql(sql_input)
+        if is_valid:
+            st.success(message)
+        else:
+            st.error(f"Validation failed: {message}")
+
+    st.markdown("### DBT Model Documentation Generator")
+
+    model_dir = st.text_input("Enter path to your dbt models directory", "./models")
+    
+    if model_dir and os.path.isdir(model_dir):
+        yml_files = glob.glob(os.path.join(model_dir, "**/*.yml"), recursive=True)
+        yaml_files = glob.glob(os.path.join(model_dir, "**/*.yaml"), recursive=True)
+        all_files = yml_files + yaml_files
+        if all_files:
+            st.success(f"Found {len(all_files)} YAML files.")
+            all_docs = []
+            for all_files in all_files:
+                docs = parse_dbt_yml(all_files)
+                all_docs.extend(docs)
+
+            st.markdown("### Generated Documentation")
+            for doc in all_docs:
+                st.markdown(doc)
+
+            if st.button("Export as Markdown"):
+                with open("dbt_docs.md", "w") as f:
+                    f.write("\n\n".join(all_docs))
+                st.success("Documentation exported to `dbt_docs.md`.")
+        else:
+            st.warning("No YAML files found in the specified directory.")
+    
+    else:
+        st.info("Please enter a valid directory path.")
 
 # --- Navigation Buttons ---
 st.markdown("<br><hr>", unsafe_allow_html=True)
