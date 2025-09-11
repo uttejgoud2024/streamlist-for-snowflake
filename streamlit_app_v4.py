@@ -12,7 +12,6 @@ from core_logic_v4 import (
     validate_sql,
     convert_oracle_to_snowflake,
     wrap_sql_in_dbt_model,
-    create_summary_file,
     run_crew_migration,
     log_setup
 )
@@ -118,14 +117,10 @@ def migration_settings_tab(session, custom_llm):
 
     if st.button("🚀 Convert and Save Models"):
         if uploaded_files:
-            # Clear previous summary file for a fresh start
-            summary_path = Path(log_dir) / "summary.txt"
-            if summary_path.exists():
-                summary_path.unlink()
-            
             # Use st.session_state to store uploaded files and results
             st.session_state['uploaded_files_data'] = {file.name: file.read().decode("utf-8") for file in uploaded_files}
             st.session_state['converted_files'] = {}
+            st.session_state['migration_summary'] = {}
 
             total_files = len(st.session_state['uploaded_files_data'])
             progress_bar = st.progress(0)
@@ -142,23 +137,28 @@ def migration_settings_tab(session, custom_llm):
                         is_valid, message = validate_sql(file_content)
                         if not is_valid:
                             st.error(f"Validation failed for `{file_name}`: {message}")
+                            st.session_state['migration_summary'][file_name] = f"Failure: {message}"
                             continue
                         
                         with st.spinner(f"Converting `{file_name}` using regex..."):
                             converted_sql = convert_oracle_to_snowflake(file_content)
                             wrapped_sql = wrap_sql_in_dbt_model(converted_sql, model_type)
-                            oracle_logic_summary = "N/A - Direct SQL Conversion"
-                            create_summary_file(log_dir, file_name, model_type, oracle_logic_summary, converted_sql)
+                            st.session_state['migration_summary'][file_name] = "Success: Converted via regex"
                             
                     elif source_type in ["Procedure", "Function", "Package", "View"]:
                         with st.status(f"Using CrewAI to convert `{file_name}`...", expanded=True) as status:
                             try:
-                                wrapped_sql, oracle_logic_summary = run_crew_migration(file_content, source_type, model_type, custom_llm)
-                                cleaned_sql_for_preview = wrapped_sql.split("}}")[-1].strip()
-                                create_summary_file(log_dir, file_name, model_type, oracle_logic_summary, cleaned_sql_for_preview)
-                                status.update(label="✅ **Migration complete!**", state="complete", expanded=False)
+                                wrapped_sql, status_message = run_crew_migration(file_content, source_type, model_type, custom_llm)
+                                st.session_state['migration_summary'][file_name] = status_message
+                                
+                                if "Success" in status_message:
+                                    status.update(label="✅ **Migration complete!**", state="complete", expanded=False)
+                                else:
+                                    status.update(label="❌ **Migration failed.**", state="error", expanded=False)
+                                    st.error(f"❌ CrewAI execution failed: {status_message}")
+                                    continue
                             except Exception as e:
-                                logging.critical(f"CrewAI execution failed with an exception: {e}")
+                                st.session_state['migration_summary'][file_name] = f"Failure: {e}"
                                 status.update(label="❌ **Migration failed.**", state="error", expanded=False)
                                 st.error(f"❌ CrewAI execution failed: {e}")
                                 continue
@@ -172,20 +172,22 @@ def migration_settings_tab(session, custom_llm):
 
                 except Exception as e:
                     st.error(f"❌ Error processing `{file_name}`: {str(e)}")
+                    st.session_state['migration_summary'][file_name] = f"Failure: {e}"
+
             st.toast("✅ All files processed!", icon="🎉")
         else:
             st.warning("⚠️ Please upload at least one file and provide a valid DBT path.")
 
     # --- Display Sections ---
 
-    # Display the summary report first, if it exists
-    log_dir = Path(st.session_state.get("dbt_path", "")) / "migration_logs"
-    if log_dir.exists() and (log_dir / "summary.txt").exists():
+    # Display the summary report
+    if 'migration_summary' in st.session_state and st.session_state['migration_summary']:
         st.markdown("### Migration Summary Report")
-        with st.expander("View Full Summary"):
-            summary_path = log_dir / "summary.txt"
-            with open(summary_path, "r") as f:
-                st.text(f.read())
+        for file_name, status in st.session_state['migration_summary'].items():
+            if "Success" in status:
+                st.markdown(f"✅ `{file_name}`: **{status}**")
+            else:
+                st.markdown(f"❌ `{file_name}`: **{status}**")
     
     # Then display the code comparison and download button
     if 'uploaded_files_data' in st.session_state and st.session_state['uploaded_files_data']:
