@@ -1,11 +1,11 @@
-# streamlit_app.py
+# streamlit_app_v4.py
 
 from sysconfig import get_path
 import streamlit as st
 import os
 import re
 import logging
-import dotenv # Import the dotenv library
+import dotenv 
 from pathlib import Path
 from core_logic_v4 import (
     get_snowpark_session_and_llm,
@@ -16,8 +16,6 @@ from core_logic_v4 import (
     run_crew_migration,
     log_setup
 )
-
-
 
 # Load environment variables from a .env file
 dotenv.load_dotenv()
@@ -113,7 +111,7 @@ def migration_settings_tab(session, custom_llm):
             st.error(f"❌ Error creating directories: {e}. Please check permissions.")
             return
     else:
-        st.warning("⚠️ Please provide a valid DBT project path to save models and logs.")
+        st.warning("⚠️ Please provide a valid DBT path to save models and logs.")
         return
     
     log_setup(log_dir = log_dir, file_name = "app.log")
@@ -125,35 +123,39 @@ def migration_settings_tab(session, custom_llm):
             if summary_path.exists():
                 summary_path.unlink()
             
-            total_files = len(uploaded_files)
-            for i, file in enumerate(uploaded_files):
-                st.subheader(f"Processing file {i+1} of {total_files}: `{file.name}`")
+            # Use st.session_state to store uploaded files and results
+            st.session_state['uploaded_files_data'] = {file.name: file.read().decode("utf-8") for file in uploaded_files}
+            st.session_state['converted_files'] = {}
+
+            total_files = len(st.session_state['uploaded_files_data'])
+            progress_bar = st.progress(0)
+            
+            for i, (file_name, file_content) in enumerate(st.session_state['uploaded_files_data'].items()):
+                st.subheader(f"Processing file {i+1} of {total_files}: `{file_name}`")
                 
                 try:
-                    file_content = file.read().decode("utf-8")
-                    base_name = os.path.splitext(file.name)[0]
+                    base_name = os.path.splitext(file_name)[0]
                     safe_name = re.sub(r'[^a-zA-Z0-9_.]', '_', base_name)
                     output_filename = output_dir / f"{safe_name}.sql"
                     
                     if source_type == "SQL File":
                         is_valid, message = validate_sql(file_content)
                         if not is_valid:
-                            st.error(f"Validation failed for `{file.name}`: {message}")
+                            st.error(f"Validation failed for `{file_name}`: {message}")
                             continue
                         
-                        with st.spinner(f"Converting `{file.name}` using regex..."):
+                        with st.spinner(f"Converting `{file_name}` using regex..."):
                             converted_sql = convert_oracle_to_snowflake(file_content)
                             wrapped_sql = wrap_sql_in_dbt_model(converted_sql, model_type)
                             oracle_logic_summary = "N/A - Direct SQL Conversion"
-                            create_summary_file(log_dir, file.name, model_type, oracle_logic_summary, converted_sql)
+                            create_summary_file(log_dir, file_name, model_type, oracle_logic_summary, converted_sql)
                             
                     elif source_type in ["Procedure", "Function", "Package", "View"]:
-                        with st.status(f"Using CrewAI to convert `{file.name}`...", expanded=True) as status:
+                        with st.status(f"Using CrewAI to convert `{file_name}`...", expanded=True) as status:
                             try:
                                 wrapped_sql, oracle_logic_summary = run_crew_migration(file_content, source_type, model_type, custom_llm)
-                                # Extract the raw SQL from the wrapped result for the summary preview
                                 cleaned_sql_for_preview = wrapped_sql.split("}}")[-1].strip()
-                                create_summary_file(log_dir, file.name, model_type, oracle_logic_summary, cleaned_sql_for_preview)
+                                create_summary_file(log_dir, file_name, model_type, oracle_logic_summary, cleaned_sql_for_preview)
                                 status.update(label="✅ **Migration complete!**", state="complete", expanded=False)
                             except Exception as e:
                                 logging.critical(f"CrewAI execution failed with an exception: {e}")
@@ -164,12 +166,17 @@ def migration_settings_tab(session, custom_llm):
                     with open(output_filename, "w") as f:
                         f.write(wrapped_sql)
                     
+                    st.session_state['converted_files'][file_name] = wrapped_sql
                     st.success(f"✅ Converted and saved to `{output_filename}`")
-                    
+                    progress_bar.progress((i + 1) / total_files)
+
                 except Exception as e:
-                    st.error(f"❌ Error processing `{file.name}`: {str(e)}")
+                    st.error(f"❌ Error processing `{file_name}`: {str(e)}")
+            st.toast("✅ All files processed!", icon="🎉")
         else:
             st.warning("⚠️ Please upload at least one file and provide a valid DBT path.")
+
+    # --- Display Sections ---
 
     # Display the summary report first, if it exists
     log_dir = Path(st.session_state.get("dbt_path", "")) / "migration_logs"
@@ -181,27 +188,30 @@ def migration_settings_tab(session, custom_llm):
                 st.text(f.read())
     
     # Then display the code comparison and download button
-    if 'uploaded_files' in st.session_state and st.session_state.uploaded_files:
-        for file in st.session_state.uploaded_files:
-            file_content = file.read().decode("utf-8")
-            base_name = os.path.splitext(file.name)[0]
-            safe_name = re.sub(r'[^a-zA-Z0-9_.]', '_', base_name)
-            output_filename = Path(st.session_state.get("dbt_path")) / "models" / st.session_state.get("subfolder") / f"{safe_name}.sql"
-
-            if os.path.exists(output_filename):
-                with st.expander(f"View Original and Converted Code for `{file.name}`"):
+    if 'uploaded_files_data' in st.session_state and st.session_state['uploaded_files_data']:
+        st.markdown("### Converted Files")
+        for file_name, original_content in st.session_state['uploaded_files_data'].items():
+            if file_name in st.session_state['converted_files']:
+                wrapped_sql = st.session_state['converted_files'][file_name]
+                
+                with st.expander(f"View Original and Converted Code for `{file_name}`"):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown(f"#### 📥 Original Oracle Code")
-                        st.code(file_content, language="sql")
+                        st.code(original_content, language="sql")
                     with col2:
                         st.markdown(f"#### 📤 Converted Snowflake DBT Model")
-                        with open(output_filename, "r") as f:
-                            wrapped_sql = f.read()
                         cleaned_sql = wrapped_sql.strip().replace("\\n", "\n").replace("&gt;", ">")
                         st.code(cleaned_sql, language="sql")
-                    with open(output_filename, "rb") as f:
-                        st.download_button(label=f"⬇️ Download `{safe_name}.sql`", data=f, file_name=f"{safe_name}.sql", mime="text/sql")
+                    
+                    base_name = os.path.splitext(file_name)[0]
+                    safe_name = re.sub(r'[^a-zA-Z0-9_.]', '_', base_name)
+                    output_filename = Path(st.session_state.get("dbt_path")) / "models" / st.session_state.get("subfolder") / f"{safe_name}.sql"
+                    
+                    if output_filename.exists():
+                        with open(output_filename, "rb") as f:
+                            st.download_button(label=f"⬇️ Download `{safe_name}.sql`", data=f, file_name=f"{safe_name}.sql", mime="text/sql")
+                        
 
 def main():
     st.set_page_config(page_title="Oracle to Snowflake DBT Migration", layout="wide")
