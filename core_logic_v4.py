@@ -95,19 +95,7 @@ def wrap_sql_in_dbt_model(sql_text, model_type):
     config = f"{{{{ config(materialized='{model_type}') }}}}"
     return f"{config}\n\n{sql_text}"
 
-def create_summary_file(output_dir, file_name, model_type, oracle_logic_summary):
-    """Creates a summary file with migration details, appending to the file."""
-    summary_path = Path(output_dir) / "summary.txt"
-    with open(summary_path, "a") as f:
-        f.write("--- Migration Summary for " + file_name + " ---\n\n")
-        f.write(f"File Name: {file_name}\n")
-        f.write(f"DBT Model Type: {model_type}\n")
-        f.write("\n--- Oracle Code Analysis ---\n")
-        f.write(oracle_logic_summary)
-        # Converted code preview is removed as per user request
-        f.write("\n" + "-" * 30 + "\n\n")
-    logging.info(f"Summary for {file_name} appended to {summary_path}")
-    return summary_path
+# Note: The `create_summary_file` function has been removed.
 
 # --- Snowflake Cortex LLM and CrewAI ---
 class SnowflakeCortexLLM(BaseLLM):
@@ -176,52 +164,48 @@ def get_snowpark_session_and_llm():
 
 def run_crew_migration(file_content, source_type, model_type, custom_llm):
     """Runs the CrewAI process for procedural code migration."""
-    oracle_analyst = Agent(role="Oracle PL/SQL Analyst", goal="Analyze and explain the logic of Oracle procedures, functions, packages, and views.", backstory="A seasoned expert in Oracle PL/SQL, meticulously breaking down complex business logic, procedural constructs (BEGIN/END blocks, FOR loops, IF/ELSE statements), and database interactions.", llm=custom_llm, verbose=True)
-    dbt_modeler = Agent(role="Snowflake DBT Modeler", goal="Translate Oracle procedural and declarative logic into clean, efficient, and modular Snowflake dbt models.", backstory="A master of Snowflake SQL and DBT best practices. This agent focuses on converting imperative procedural logic into a single, declarative SQL query that can be run as a dbt model.", llm=custom_llm, verbose=True)
-    snowflake_optimizer = Agent(role="Snowflake Optimizer", goal="Refactor and optimize the converted SQL for Snowflake's architecture, ensuring maximum performance.", backstory="A performance engineer with deep knowledge of Snowflake's query engine, ensuring all code runs at peak efficiency. This agent applies best practices like QUALIFY, ROW_NUMBER, and proper join techniques.", llm=custom_llm, verbose=True)
-    quality_reviewer = Agent(role="SQL Quality Reviewer", goal="Validate the final DBT model for correctness, formatting, and adherence to standards.", backstory="A meticulous reviewer who ensures the final output is production-ready, well-formatted, and follows coding standards.", llm=custom_llm, verbose=True)
-
-    tasks = [
-        Task(description=f"Analyze the following Oracle {source_type} code and document its core business logic:\n\n{file_content}", expected_output=f"A clear, structured document explaining the {source_type.lower()}'s logic.", agent=oracle_analyst),
-        Task(description="Based on the analysis, convert the procedural logic into a single, executable SQL SELECT statement for a Snowflake DBT model. Do NOT include DDL statements.", expected_output="A single, well-formatted DBT model SQL file (a SELECT statement).", agent=dbt_modeler),
-        Task(description="Review and optimize the converted SQL for Snowflake's architecture, focusing on performance.", expected_output="An optimized DBT model SQL file.", agent=snowflake_optimizer),
-        Task(description="Review the final, optimized DBT model SQL for correctness, formatting, and style. The output should be the final production-ready SQL.", expected_output="The final, production-ready DBT model SQL, formatted with correct indentation and comments.", agent=quality_reviewer)
-    ]
-    
-    crew = Crew(
-        agents=[oracle_analyst, dbt_modeler, snowflake_optimizer, quality_reviewer],
-        tasks=tasks,
-        verbose=True
-    )
-    
     try:
+        oracle_analyst = Agent(role="Oracle PL/SQL Analyst", goal="Analyze and explain the logic of Oracle procedures, functions, packages, and views.", backstory="A seasoned expert in Oracle PL/SQL, meticulously breaking down complex business logic, procedural constructs (BEGIN/END blocks, FOR loops, IF/ELSE statements), and database interactions.", llm=custom_llm, verbose=True)
+        dbt_modeler = Agent(role="Snowflake DBT Modeler", goal="Translate Oracle procedural and declarative logic into clean, efficient, and modular Snowflake dbt models.", backstory="A master of Snowflake SQL and DBT best practices. This agent focuses on converting imperative procedural logic into a single, declarative SQL query that can be run as a dbt model.", llm=custom_llm, verbose=True)
+        snowflake_optimizer = Agent(role="Snowflake Optimizer", goal="Refactor and optimize the converted SQL for Snowflake's architecture, ensuring maximum performance.", backstory="A performance engineer with deep knowledge of Snowflake's query engine, ensuring all code runs at peak efficiency. This agent applies best practices like QUALIFY, ROW_NUMBER, and proper join techniques.", llm=custom_llm, verbose=True)
+        quality_reviewer = Agent(role="SQL Quality Reviewer", goal="Validate the final DBT model for correctness, formatting, and adherence to standards.", backstory="A meticulous reviewer who ensures the final output is production-ready, well-formatted, and follows coding standards.", llm=custom_llm, verbose=True)
+
+        tasks = [
+            Task(description=f"Analyze the following Oracle {source_type} code and document its core business logic:\n\n{file_content}", expected_output=f"A clear, structured document explaining the {source_type.lower()}'s logic.", agent=oracle_analyst),
+            Task(description="Based on the analysis, convert the procedural logic into a single, executable SQL SELECT statement for a Snowflake DBT model. Do NOT include DDL statements.", expected_output="A single, well-formatted DBT model SQL file (a SELECT statement).", agent=dbt_modeler),
+            Task(description="Review and optimize the converted SQL for Snowflake's architecture, focusing on performance.", expected_output="An optimized DBT model SQL file.", agent=snowflake_optimizer),
+            Task(description="Review the final, optimized DBT model SQL for correctness, formatting, and style. The output should be the final production-ready SQL.", expected_output="The final, production-ready DBT model SQL, formatted with correct indentation and comments.", agent=quality_reviewer)
+        ]
+        
+        crew = Crew(
+            agents=[oracle_analyst, dbt_modeler, snowflake_optimizer, quality_reviewer],
+            tasks=tasks,
+            verbose=True
+        )
+        
         final_output = crew.kickoff()
+        logging.info("CrewAI execution completed.")
+        
+        final_output_str = final_output if isinstance(final_output, str) else str(final_output)
+
+        # Extract SQL from the markdown block
+        clean_sql = ""
+        sql_match = re.search(r"```sql\s*(.*?)\s*```", final_output_str, re.DOTALL)
+        if sql_match:
+            clean_sql = sql_match.group(1).strip()
+        else:
+            # Fallback to the last part of the output if no markdown block is found
+            clean_sql = final_output_str.split("Final Answer:")[-1].strip()
+        
+        if not clean_sql:
+            raise ValueError("No SQL code was generated by the CrewAI agents.")
+        
+        converted_sql = convert_oracle_to_snowflake(clean_sql)
+        wrapped_sql = wrap_sql_in_dbt_model(converted_sql, model_type)
+        
+        return wrapped_sql, "Success"
+
     except Exception as e:
         logging.critical(f"CrewAI execution failed with an exception: {e}")
-        raise ValueError(f"CrewAI execution failed: {e}")
+        return None, f"Failure: {e}"
 
-    logging.info("CrewAI execution completed.")
-
-    oracle_logic_summary = "No summary was generated by the Oracle PL/SQL Analyst. The CrewAI output format may be different than expected."
-    final_output_str = final_output if isinstance(final_output, str) else str(final_output)
-
-    # Use a more specific regex to find the output for the first task
-    summary_match = re.search(r'### Task:\s*Analyze the following Oracle .*? code.*?### Task Output:\n(.*?)(?=\n### Task:|\Z)', final_output_str, re.DOTALL)
-    if summary_match:
-        extracted_summary = summary_match.group(1).strip()
-        if extracted_summary:
-            oracle_logic_summary = extracted_summary
-    
-    # Extract SQL from the markdown block
-    clean_sql = ""
-    sql_match = re.search(r"```sql\s*(.*?)\s*```", final_output_str, re.DOTALL)
-    if sql_match:
-        clean_sql = sql_match.group(1).strip()
-    else:
-        # Fallback to the last part of the output if no markdown block is found
-        clean_sql = final_output_str.split("Final Answer:")[-1].strip()
-    
-    converted_sql = convert_oracle_to_snowflake(clean_sql)
-    wrapped_sql = wrap_sql_in_dbt_model(converted_sql, model_type)
-    
-    return wrapped_sql, oracle_logic_summary
