@@ -82,6 +82,10 @@ your_project_name:
 def migration_settings_tab(session, custom_llm):
     st.markdown("## 📁 Migration Settings")
     
+    if not session or not custom_llm:
+        st.error("❌ Failed to connect to Snowflake. Please check your environment variables and try again.")
+        return
+
     col1, col2 = st.columns(2)
     with col1:
         source_type = st.selectbox("Select Source File Type", ["SQL File", "Procedure", "Function", "Package", "View"])
@@ -102,8 +106,12 @@ def migration_settings_tab(session, custom_llm):
     if dbt_path:
         output_dir = Path(dbt_path) / "models" / subfolder
         log_dir = Path(dbt_path) / "migration_logs"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            st.error(f"❌ Error creating directories: {e}. Please check permissions.")
+            return
     else:
         st.warning("⚠️ Please provide a valid DBT project path to save models and logs.")
         return
@@ -112,6 +120,11 @@ def migration_settings_tab(session, custom_llm):
 
     if st.button("🚀 Convert and Save Models"):
         if uploaded_files:
+            # Clear previous summary file for a fresh start
+            summary_path = Path(log_dir) / "summary.txt"
+            if summary_path.exists():
+                summary_path.unlink()
+            
             total_files = len(uploaded_files)
             for i, file in enumerate(uploaded_files):
                 st.subheader(f"Processing file {i+1} of {total_files}: `{file.name}`")
@@ -132,17 +145,15 @@ def migration_settings_tab(session, custom_llm):
                             converted_sql = convert_oracle_to_snowflake(file_content)
                             wrapped_sql = wrap_sql_in_dbt_model(converted_sql, model_type)
                             oracle_logic_summary = "N/A - Direct SQL Conversion"
-                            create_summary_file(log_dir, file.name, model_type, oracle_logic_summary)
+                            create_summary_file(log_dir, file.name, model_type, oracle_logic_summary, converted_sql)
                             
                     elif source_type in ["Procedure", "Function", "Package", "View"]:
-                        if not custom_llm:
-                            st.error("❌ Snowflake Cortex LLM is not initialized. Cannot process this file type.")
-                            continue
-
                         with st.status(f"Using CrewAI to convert `{file.name}`...", expanded=True) as status:
                             try:
                                 wrapped_sql, oracle_logic_summary = run_crew_migration(file_content, source_type, model_type, custom_llm)
-                                create_summary_file(log_dir, file.name, model_type, oracle_logic_summary)
+                                # Extract the raw SQL from the wrapped result for the summary preview
+                                cleaned_sql_for_preview = wrapped_sql.split("}}")[-1].strip()
+                                create_summary_file(log_dir, file.name, model_type, oracle_logic_summary, cleaned_sql_for_preview)
                                 status.update(label="✅ **Migration complete!**", state="complete", expanded=False)
                             except Exception as e:
                                 logging.critical(f"CrewAI execution failed with an exception: {e}")
@@ -171,10 +182,11 @@ def migration_settings_tab(session, custom_llm):
         else:
             st.warning("⚠️ Please upload at least one file and provide a valid DBT path.")
 
-    if log_dir and Path(log_dir).exists() and (Path(log_dir) / "summary.txt").exists():
+    log_dir = Path(st.session_state.get("dbt_path", "")) / "migration_logs"
+    if log_dir.exists() and (log_dir / "summary.txt").exists():
         st.markdown("### Migration Summary Report")
         with st.expander("View Full Summary"):
-            summary_path = Path(log_dir) / "summary.txt"
+            summary_path = log_dir / "summary.txt"
             with open(summary_path, "r") as f:
                 st.text(f.read())
 
@@ -194,4 +206,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
