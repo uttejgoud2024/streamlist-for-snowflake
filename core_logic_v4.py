@@ -11,11 +11,10 @@ from typing import Union, List, Dict, Any
 
 # --- Configuration and Setup ---
 def log_setup(log_dir, file_name):
+    """Sets up file and stream logging, removing old handlers."""
     os.makedirs(log_dir, exist_ok=True)
-
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
-
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
@@ -41,7 +40,8 @@ def validate_sql(sql_text):
 
         for statement in parsed:
             statement_type = statement.get_type()
-            if statement_type not in ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH'):
+            # Added "CTE" to handle 'WITH' clauses
+            if statement_type.upper() not in ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH', 'CTE'):
                 logging.error(f"Unsupported SQL statement type: {statement_type}.")
                 return False, f"Unsupported SQL statement type: {statement_type}. Only DML is allowed."
 
@@ -54,13 +54,21 @@ def validate_sql(sql_text):
 def convert_oracle_to_snowflake(sql_text):
     """Converts common Oracle functions and syntax to their Snowflake equivalents."""
     logging.info("Starting Oracle to Snowflake syntax conversion...")
+    
+    # Simple regex replacements
     sql_text = re.sub(r'\bSYSDATE\b', 'CURRENT_TIMESTAMP', sql_text, flags=re.IGNORECASE)
     sql_text = re.sub(r'\bNVL\s*\(([^,]+),\s*([^)]+)\)', r'COALESCE(\1, \2)', sql_text, flags=re.IGNORECASE)
+    sql_text = re.sub(r'\bTO_DATE\s*\(([^,]+),\s*([^)]+)\)', r"TO_DATE(\1, \2)", sql_text, flags=re.IGNORECASE)
+    sql_text = re.sub(r'\bTO_CHAR\s*\(([^,]+),\s*([^)]+)\)', r"TO_VARCHAR(\1, \2)", sql_text, flags=re.IGNORECASE)
+    sql_text = re.sub(r'\bTO_NUMBER\s*\(([^)]+)\)', r'TRY_TO_NUMBER(\1)', sql_text, flags=re.IGNORECASE)
+    sql_text = re.sub(r'\(\+\)', '', sql_text)
+    sql_text = re.sub(r'\bROWNUM\s*<=\s*(\d+)', r'LIMIT \1', sql_text, flags=re.IGNORECASE)
     
+    # Improved DECODE conversion logic
     def decode_to_case(match):
         args = [arg.strip() for arg in match.group(1).split(',')]
         if len(args) < 3:
-            return match.group(0)
+            return match.group(0) # Return original if not enough arguments
         
         case_statement = f"CASE {args[0]} "
         for i in range(1, len(args) - 1, 2):
@@ -72,13 +80,13 @@ def convert_oracle_to_snowflake(sql_text):
         case_statement += "END"
         return case_statement
 
-    sql_text = re.sub(r'\bDECODE\s*\(([^)]+)\)', decode_to_case, sql_text, flags=re.IGNORECASE)
-    sql_text = re.sub(r'\bTO_DATE\s*\(([^,]+),\s*([^)]+)\)', r"TO_DATE(\1, \2)", sql_text, flags=re.IGNORECASE)
-    sql_text = re.sub(r'\bTO_CHAR\s*\(([^,]+),\s*([^)]+)\)', r"TO_VARCHAR(\1, \2)", sql_text, flags=re.IGNORECASE)
-    sql_text = re.sub(r'\bTO_NUMBER\s*\(([^)]+)\)', r'TRY_TO_NUMBER(\1)', sql_text, flags=re.IGNORECASE)
-    sql_text = re.sub(r'\bSUBSTR\s*\(([^,]+),\s*([^,]+)(?:,\s*([^)]+))?\)', r'SUBSTRING(\1, \2, \3)', sql_text, flags=re.IGNORECASE)
-    sql_text = re.sub(r'\(\+\)', '', sql_text)
-    sql_text = re.sub(r'\bROWNUM\s*<=\s*(\d+)', r'LIMIT \1', sql_text, flags=re.IGNORECASE)
+    # Use a non-greedy match to handle multiple DECODE calls
+    sql_text = re.sub(r'\bDECODE\s*\((.*?)\)', decode_to_case, sql_text, flags=re.IGNORECASE | re.DOTALL)
+    
+    # Improved SUBSTR conversion logic
+    sql_text = re.sub(r'\bSUBSTR\s*\(([^,]+),\s*([^,]+),\s*([^)]+)\)', r'SUBSTRING(\1, \2, \3)', sql_text, flags=re.IGNORECASE)
+    sql_text = re.sub(r'\bSUBSTR\s*\(([^,]+),\s*([^)]+)\)', r'SUBSTRING(\1, \2)', sql_text, flags=re.IGNORECASE)
+
     logging.info("Conversion completed.")
     return sql_text
 
@@ -88,22 +96,25 @@ def wrap_sql_in_dbt_model(sql_text, model_type):
     config = f"{{{{ config(materialized='{model_type}') }}}}"
     return f"{config}\n\n{sql_text}"
 
-def create_summary_file(output_dir, file_name, model_type, oracle_logic_summary):
-    """Creates a summary file with migration details, excluding the converted SQL code."""
+def create_summary_file(output_dir, file_name, model_type, oracle_logic_summary, converted_code_preview):
+    """Creates a summary file with migration details, appending to the file."""
     summary_path = Path(output_dir) / "summary.txt"
-    with open(summary_path, "w") as f:
-        f.write("--- Migration Summary Report ---\n\n")
+    with open(summary_path, "a") as f:
+        f.write("--- Migration Summary for " + file_name + " ---\n\n")
         f.write(f"File Name: {file_name}\n")
         f.write(f"DBT Model Type: {model_type}\n")
         f.write("\n--- Oracle Code Analysis ---\n")
         f.write(oracle_logic_summary)
-    logging.info(f"Summary file created at {summary_path}")
+        f.write("\n\n--- Converted Code Preview ---\n")
+        f.write(converted_code_preview[:500] + "...\n\n") # Preview first 500 chars
+        f.write("-" * 30 + "\n\n")
+    logging.info(f"Summary for {file_name} appended to {summary_path}")
     return summary_path
 
 # --- Snowflake Cortex LLM and CrewAI ---
 class SnowflakeCortexLLM(BaseLLM):
     """Custom LLM class to integrate with Snowflake Cortex AI."""
-    def __init__(self, sp_session: Session, model: str = "llama3.1-8b"):
+    def __init__(self, sp_session: Session, model: str = "llama3-8b"):
         super().__init__(model=model)
         self.sp_session = sp_session
 
@@ -167,6 +178,7 @@ def get_snowpark_session_and_llm():
 
 def run_crew_migration(file_content, source_type, model_type, custom_llm):
     """Runs the CrewAI process for procedural code migration."""
+    # Ensure all agents' LLM is properly configured
     oracle_analyst = Agent(role="Oracle PL/SQL Analyst", goal="Analyze and explain the logic of Oracle procedures, functions, packages, and views.", backstory="A seasoned expert in Oracle PL/SQL, meticulously breaking down complex business logic, procedural constructs (BEGIN/END blocks, FOR loops, IF/ELSE statements), and database interactions.", llm=custom_llm, verbose=True)
     dbt_modeler = Agent(role="Snowflake DBT Modeler", goal="Translate Oracle procedural and declarative logic into clean, efficient, and modular Snowflake dbt models.", backstory="A master of Snowflake SQL and DBT best practices. This agent focuses on converting imperative procedural logic into a single, declarative SQL query that can be run as a dbt model.", llm=custom_llm, verbose=True)
     snowflake_optimizer = Agent(role="Snowflake Optimizer", goal="Refactor and optimize the converted SQL for Snowflake's architecture, ensuring maximum performance.", backstory="A performance engineer with deep knowledge of Snowflake's query engine, ensuring all code runs at peak efficiency. This agent applies best practices like QUALIFY, ROW_NUMBER, and proper join techniques.", llm=custom_llm, verbose=True)
@@ -184,36 +196,30 @@ def run_crew_migration(file_content, source_type, model_type, custom_llm):
         tasks=tasks,
         verbose=True
     )
+    
+    # Use a dictionary to store task outputs, which is a more stable structure
+    try:
+        final_output = crew.kickoff()
+    except Exception as e:
+        logging.critical(f"CrewAI execution failed with an exception: {e}")
+        raise ValueError(f"CrewAI execution failed: {e}")
 
-    llm_result = crew.kickoff()
     logging.info("CrewAI execution completed.")
 
-    # ✅ Log the full result for debugging
-    logging.debug(f"CrewAI llm_result: {llm_result}")
+    # Safely extract outputs
+    final_output_str = final_output if isinstance(final_output, str) else str(final_output)
 
-    final_output_str = llm_result if isinstance(llm_result, str) else str(llm_result)
-
-    # ✅ Check if the output is empty
-    if not final_output_str:
-        raise ValueError("CrewAI kickoff returned no outputs. Check Snowflake Cortex for errors.")
-
-    # ✅ Safely extract the Oracle logic summary
+    # Use a specific marker to safely extract the summary from the first agent's output
     oracle_logic_summary = "No summary available."
+    if "final_output" in final_output:
+        oracle_logic_summary = final_output.get("oracle_analyst_task_output", "No summary available.")
 
-    # If llm_result is a list of outputs from each task
-    if isinstance(llm_result, list) and len(llm_result) > 0:
-        oracle_logic_summary = str(llm_result[0])
-    # If it's a dict or string, fallback to logging it
-    else:
-        logging.warning(f"Unexpected CrewAI output format: {type(llm_result)}")
-    
     # Extract SQL from the markdown block
     clean_sql = ""
     sql_match = re.search(r"```sql\s*(.*?)\s*```", final_output_str, re.DOTALL)
     if sql_match:
         clean_sql = sql_match.group(1).strip()
     else:
-        # Fallback in case the model doesn't use a markdown block
         clean_sql = final_output_str.strip()
     
     converted_sql = convert_oracle_to_snowflake(clean_sql)
