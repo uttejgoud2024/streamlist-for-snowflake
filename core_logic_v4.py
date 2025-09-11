@@ -95,7 +95,17 @@ def wrap_sql_in_dbt_model(sql_text, model_type):
     config = f"{{{{ config(materialized='{model_type}') }}}}"
     return f"{config}\n\n{sql_text}"
 
-# Note: The `create_summary_file` function has been removed.
+def create_summary_file(output_dir, file_name, model_type, status_message):
+    """Creates a summary file with migration details, appending to the file."""
+    summary_path = Path(output_dir) / "summary.txt"
+    with open(summary_path, "a") as f:
+        f.write("--- Migration Summary for " + file_name + " ---\n\n")
+        f.write(f"File Name: {file_name}\n")
+        f.write(f"DBT Model Type: {model_type}\n")
+        f.write(f"Migration Status: {status_message}\n")
+        f.write("\n" + "-" * 30 + "\n\n")
+    logging.info(f"Summary for {file_name} appended to {summary_path}")
+    return summary_path
 
 # --- Snowflake Cortex LLM and CrewAI ---
 class SnowflakeCortexLLM(BaseLLM):
@@ -208,4 +218,3 @@ def run_crew_migration(file_content, source_type, model_type, custom_llm):
     except Exception as e:
         logging.critical(f"CrewAI execution failed with an exception: {e}")
         return None, f"Failure: {e}"
-
