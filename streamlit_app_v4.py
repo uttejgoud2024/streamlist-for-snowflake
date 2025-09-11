@@ -166,22 +166,12 @@ def migration_settings_tab(session, custom_llm):
                     
                     st.success(f"✅ Converted and saved to `{output_filename}`")
                     
-                    with st.expander("View Original and Converted Code"):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown(f"#### 📥 Original Oracle Code for `{file.name}`")
-                            st.code(file_content, language="sql")
-                    with col2:
-                        st.markdown(f"#### 📤 Converted Snowflake DBT Model")
-                        cleaned_sql = wrapped_sql.strip().replace("\\n", "\n").replace("&gt;", ">")
-                        st.code(cleaned_sql, language="sql")
-                    with open(output_filename, "rb") as f:
-                        st.download_button(label=f"⬇️ Download `{safe_name}.sql`", data=f, file_name=f"{safe_name}.sql", mime="text/sql")
                 except Exception as e:
                     st.error(f"❌ Error processing `{file.name}`: {str(e)}")
         else:
             st.warning("⚠️ Please upload at least one file and provide a valid DBT path.")
 
+    # Display the summary report first, if it exists
     log_dir = Path(st.session_state.get("dbt_path", "")) / "migration_logs"
     if log_dir.exists() and (log_dir / "summary.txt").exists():
         st.markdown("### Migration Summary Report")
@@ -189,6 +179,29 @@ def migration_settings_tab(session, custom_llm):
             summary_path = log_dir / "summary.txt"
             with open(summary_path, "r") as f:
                 st.text(f.read())
+    
+    # Then display the code comparison and download button
+    if 'uploaded_files' in st.session_state and st.session_state.uploaded_files:
+        for file in st.session_state.uploaded_files:
+            file_content = file.read().decode("utf-8")
+            base_name = os.path.splitext(file.name)[0]
+            safe_name = re.sub(r'[^a-zA-Z0-9_.]', '_', base_name)
+            output_filename = Path(st.session_state.get("dbt_path")) / "models" / st.session_state.get("subfolder") / f"{safe_name}.sql"
+
+            if os.path.exists(output_filename):
+                with st.expander(f"View Original and Converted Code for `{file.name}`"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"#### 📥 Original Oracle Code")
+                        st.code(file_content, language="sql")
+                    with col2:
+                        st.markdown(f"#### 📤 Converted Snowflake DBT Model")
+                        with open(output_filename, "r") as f:
+                            wrapped_sql = f.read()
+                        cleaned_sql = wrapped_sql.strip().replace("\\n", "\n").replace("&gt;", ">")
+                        st.code(cleaned_sql, language="sql")
+                    with open(output_filename, "rb") as f:
+                        st.download_button(label=f"⬇️ Download `{safe_name}.sql`", data=f, file_name=f"{safe_name}.sql", mime="text/sql")
 
 def main():
     st.set_page_config(page_title="Oracle to Snowflake DBT Migration", layout="wide")
