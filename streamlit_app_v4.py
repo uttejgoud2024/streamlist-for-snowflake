@@ -12,9 +12,11 @@ from core_logic_v4 import (
     validate_sql,
     convert_oracle_to_snowflake,
     wrap_sql_in_dbt_model,
+    create_summary_file,
     run_crew_migration,
     log_setup
 )
+
 
 # Load environment variables from a .env file
 dotenv.load_dotenv()
@@ -117,10 +119,15 @@ def migration_settings_tab(session, custom_llm):
 
     if st.button("🚀 Convert and Save Models"):
         if uploaded_files:
+            # Clear previous summary file for a fresh start
+            summary_path = Path(log_dir) / "summary.txt"
+            if summary_path.exists():
+                summary_path.unlink()
+            
             # Use st.session_state to store uploaded files and results
             st.session_state['uploaded_files_data'] = {file.name: file.read().decode("utf-8") for file in uploaded_files}
             st.session_state['converted_files'] = {}
-            st.session_state['migration_summary'] = {}
+            st.session_state['migration_summary_exists'] = False
 
             total_files = len(st.session_state['uploaded_files_data'])
             progress_bar = st.progress(0)
@@ -137,43 +144,39 @@ def migration_settings_tab(session, custom_llm):
                         is_valid, message = validate_sql(file_content)
                         if not is_valid:
                             st.error(f"Validation failed for `{file_name}`: {message}")
-                            st.session_state['migration_summary'][file_name] = f"Failure: {message}"
+                            create_summary_file(log_dir, file_name, model_type, f"Failure: {message}")
                             continue
                         
                         with st.spinner(f"Converting `{file_name}` using regex..."):
                             converted_sql = convert_oracle_to_snowflake(file_content)
                             wrapped_sql = wrap_sql_in_dbt_model(converted_sql, model_type)
-                            st.session_state['migration_summary'][file_name] = "Success: Converted via regex"
+                            create_summary_file(log_dir, file_name, model_type, "Success: Converted via regex")
                             
                     elif source_type in ["Procedure", "Function", "Package", "View"]:
                         with st.status(f"Using CrewAI to convert `{file_name}`...", expanded=True) as status:
-                            try:
-                                wrapped_sql, status_message = run_crew_migration(file_content, source_type, model_type, custom_llm)
-                                st.session_state['migration_summary'][file_name] = status_message
-                                
-                                if "Success" in status_message:
-                                    status.update(label="✅ **Migration complete!**", state="complete", expanded=False)
-                                else:
-                                    status.update(label="❌ **Migration failed.**", state="error", expanded=False)
-                                    st.error(f"❌ CrewAI execution failed: {status_message}")
-                                    continue
-                            except Exception as e:
-                                st.session_state['migration_summary'][file_name] = f"Failure: {e}"
+                            wrapped_sql, status_message = run_crew_migration(file_content, source_type, model_type, custom_llm)
+                            
+                            create_summary_file(log_dir, file_name, model_type, status_message)
+                            
+                            if "Success" in status_message:
+                                status.update(label="✅ **Migration complete!**", state="complete", expanded=False)
+                            else:
                                 status.update(label="❌ **Migration failed.**", state="error", expanded=False)
-                                st.error(f"❌ CrewAI execution failed: {e}")
+                                st.error(f"❌ CrewAI execution failed: {status_message}")
                                 continue
                     
                     with open(output_filename, "w") as f:
                         f.write(wrapped_sql)
                     
                     st.session_state['converted_files'][file_name] = wrapped_sql
+                    st.session_state['migration_summary_exists'] = True
                     st.success(f"✅ Converted and saved to `{output_filename}`")
                     progress_bar.progress((i + 1) / total_files)
 
                 except Exception as e:
                     st.error(f"❌ Error processing `{file_name}`: {str(e)}")
-                    st.session_state['migration_summary'][file_name] = f"Failure: {e}"
-
+                    create_summary_file(log_dir, file_name, model_type, f"Failure: {e}")
+                    st.session_state['migration_summary_exists'] = True
             st.toast("✅ All files processed!", icon="🎉")
         else:
             st.warning("⚠️ Please upload at least one file and provide a valid DBT path.")
@@ -181,13 +184,13 @@ def migration_settings_tab(session, custom_llm):
     # --- Display Sections ---
 
     # Display the summary report
-    if 'migration_summary' in st.session_state and st.session_state['migration_summary']:
+    log_dir = Path(st.session_state.get("dbt_path", "")) / "migration_logs"
+    if log_dir.exists() and (log_dir / "summary.txt").exists():
         st.markdown("### Migration Summary Report")
-        for file_name, status in st.session_state['migration_summary'].items():
-            if "Success" in status:
-                st.markdown(f"✅ `{file_name}`: **{status}**")
-            else:
-                st.markdown(f"❌ `{file_name}`: **{status}**")
+        with st.expander("View Full Summary"):
+            summary_path = log_dir / "summary.txt"
+            with open(summary_path, "r") as f:
+                st.text(f.read())
     
     # Then display the code comparison and download button
     if 'uploaded_files_data' in st.session_state and st.session_state['uploaded_files_data']:
